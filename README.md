@@ -1,7 +1,7 @@
-# Project Canopy
+# Project Verdant
 
 ## Overview
-Project Canopy is a data science pipeline that investigates the correlation between vegetation loss (NDVI) and rising Land Surface Temperature (LST) using 24 years of NASA MODIS satellite data via Google Earth Engine.
+Project Verdant is a data science pipeline that investigates the correlation between vegetation loss (NDVI) and rising Land Surface Temperature (LST) using 24 years of NASA MODIS satellite data via Google Earth Engine.
 
 ## The Hypothesis
 In tropical archipelagos like Bicol, Philippines, rapid deforestation and urbanization are directly causing an increase in extreme land surface temperatures. By extracting and analyzing long-term satellite data, this project aims to quantify that relationship and detect statistically significant climate trends.
