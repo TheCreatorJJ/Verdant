@@ -1,50 +1,77 @@
 import ee
 import pandas as pd
-import time
 
-ee.Initialize(project='verdant-ee-project') 
+ee.Initialize(project='verdant-ee-project')
+bicol_region = ee.Geometry.Rectangle([122.0, 11.5, 125.0, 14.5])
 
-legazpi = ee.Geometry.Point([123.7438, 13.1391])
-# SMALLER AREA: 10km radius to focus on the city and avoid the ocean
-aoi = legazpi.buffer(10000) 
+# Create Grid
+lat_list = [11.5 + i * 0.2 for i in range(15)]
+lon_list = [122.0 + i * 0.2 for i in range(15)]
+grid_points = [ee.Feature(ee.Geometry.Point([lon, lat]), {'lat': lat, 'lon': lon}) 
+               for lat in lat_list for lon in lon_list]
+bicol_grid = ee.FeatureCollection(grid_points)
 
-print("Fetching refined urban heat data (April only)...")
+def get_lst_collection(start_date, end_date):
+    return ee.ImageCollection('MODIS/061/MOD11A2') \
+        .filterDate(start_date, end_date) \
+        .filterBounds(bicol_region) \
+        .select('LST_Day_1km') \
+        .map(lambda img: img.multiply(0.02).subtract(273.15))
 
+print("1. Calculating 20-Year Baseline...")
+baseline_col = get_lst_collection('2000-05-01', '2020-05-31')
+baseline_img = baseline_col.reduce(ee.Reducer.mean().combine(ee.Reducer.stdDev(), sharedInputs=True))
+
+baseline_stats = baseline_img.reduceRegions(
+    collection=bicol_grid,
+    reducer=ee.Reducer.first(),
+    scale=1000
+).getInfo()
+
+baseline_dict = {}
+for feature in baseline_stats['features']:
+    lat = feature['properties']['lat']
+    lon = feature['properties']['lon']
+    mean = feature['properties'].get('LST_Day_1km_mean')
+    std = feature['properties'].get('LST_Day_1km_stdDev')
+    
+    if mean is not None and std is not None and std > 0:
+        baseline_dict[(lat, lon)] = (mean, std)
+
+print(f"✅ Found baseline data for {len(baseline_dict)} grid points.")
+
+print("2. Calculating Current Temp (May 2023)...")
+current_col = get_lst_collection('2023-05-01', '2023-05-31')
+current_img = current_col.mean()
+
+current_stats = current_img.reduceRegions(
+    collection=bicol_grid,
+    reducer=ee.Reducer.mean(),
+    scale=1000
+).getInfo()
+
+print("3. Calculating Z-Scores...")
 data = []
 
-for year in range(2000, 2025):
-    # Focus ONLY on April (The hottest month)
-    start_date = f'{year}-04-01'
-    end_date = f'{year}-04-30'
+for feature in current_stats['features']:
+    lat = feature['properties']['lat']
+    lon = feature['properties']['lon']
+    current_temp = feature['properties'].get('mean')
     
-    try:
-        # 1. Get NDVI (Use MEAN for the month)
-        ndvi_col = ee.ImageCollection('MODIS/061/MOD13Q1') \
-            .filterDate(start_date, end_date) \
-            .filterBounds(aoi)
-        ndvi_val = ndvi_col.select('NDVI').mean().multiply(0.0001).reduceRegion(
-            reducer=ee.Reducer.mean(), geometry=aoi, scale=250).get('NDVI').getInfo()
+    if (lat, lon) in baseline_dict and current_temp is not None:
+        mean, std = baseline_dict[(lat, lon)]
+        z_score = (current_temp - mean) / std
+        is_extreme = bool(abs(z_score) > 2.0)
         
-        # 2. Get LST (Use MEDIAN of the daily maximums to avoid cloud/sensor noise)
-        lst_col = ee.ImageCollection('MODIS/061/MOD11A2') \
-            .filterDate(start_date, end_date) \
-            .filterBounds(aoi)
-            
-        # We take the mean of the LST_Day_1km band for April
-        lst_val = lst_col.select('LST_Day_1km').mean().multiply(0.02).subtract(273.15).reduceRegion(
-            reducer=ee.Reducer.mean(), geometry=aoi, scale=1000).get('LST_Day_1km').getInfo()
-        
-        if ndvi_val is not None and lst_val is not None:
-            data.append({
-                "Year": year,
-                "NDVI": round(ndvi_val, 4),
-                "Max_Temp_C": round(lst_val, 2) 
-            })
-            print(f"Year {year}: April Avg Temp={lst_val:.1f}°C")
-            
-        time.sleep(1) 
-    except Exception as e:
-        print(f"Skipping {year}: {e}")
+        data.append({
+            "lat": lat, "lon": lon,
+            "current_temp": round(current_temp, 2),
+            "baseline_temp": round(mean, 2),
+            "z_score": round(z_score, 2),
+            "is_extreme": is_extreme
+        })
 
-df = pd.DataFrame(data)
-df.to_csv("bicol_climate_data.csv", index=False)
+if len(data) > 0:
+    df = pd.DataFrame(data)
+    df.to_csv("bicol_grid_anomalies.csv", index=False)
+    print(f"\n✅ Spatial Z-scores saved to CSV!")

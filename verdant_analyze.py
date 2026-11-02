@@ -1,33 +1,23 @@
 import pandas as pd
 import pymannkendall as mk
-from scipy.stats import pearsonr
+from sklearn.ensemble import RandomForestRegressor
 
-# 1. Load the data
 df = pd.read_csv("bicol_climate_data.csv")
 
-print("--- EARTH SYSTEM TREND ANALYSIS ---")
+print("--- VERDANT CLIMATE ANALYSIS ---")
 
-# 2. Mann-Kendall Test for Temperature (Is it getting hotter?)
-temp_trend = mk.original_test(df['Temperature_C'])
-print("\n🌡️ Temperature Trend Analysis:")
-print(f"Trend Direction: {temp_trend.trend}")
-print(f"p-value: {temp_trend.p:.4f} (Significant if < 0.05)")
-print(f"Sen's Slope (Rate of change): {temp_trend.slope:.3f} °C per year")
+# 1. Trend Analysis
+df['LST_Rolling'] = df['LST_Max'].rolling(window=3, center=True).mean()
+trend_data = df.dropna(subset=['LST_Rolling'])
+temp_trend = mk.hamed_rao_modification_test(trend_data['LST_Rolling'])
+print(f"Smoothed Trend: {temp_trend.trend.upper()} (p-value: {temp_trend.p:.4f})")
 
-# 3. Mann-Kendall Test for Vegetation (Is it getting greener or browner?)
-ndvi_trend = mk.original_test(df['NDVI'])
-print("\n🌱 Vegetation (NDVI) Trend Analysis:")
-print(f"Trend Direction: {ndvi_trend.trend}")
-print(f"p-value: {ndvi_trend.p:.4f} (Significant if < 0.05)")
-print(f"Sen's Slope (Rate of change): {ndvi_trend.slope:.5f} NDVI per year")
+# 2. Random Forest Attribution
+X = df[['NDVI', 'Nightlights']]
+y = df['LST_Max']
 
-# 4. Pearson Correlation (Do heat and vegetation move together?)
-correlation, p_value = pearsonr(df['NDVI'], df['Temperature_C'])
-print("\n🔗 Correlation (NDVI vs. Temperature):")
-print(f"Pearson Correlation (r): {correlation:.3f}")
-print(f"Correlation p-value: {p_value:.4f}")
+rf_model = RandomForestRegressor(n_estimators=100, random_state=42)
+rf_model.fit(X, y)
 
-if correlation < -0.5:
-    print("🚨 CONCLUSION: Strong negative correlation! As vegetation drops, heat rises in Bicol.")
-else:
-    print("ℹ️ CONCLUSION: No strong inverse relationship found.")
+print(f"NDVI Influence: {rf_model.feature_importances_[0]*100:.1f}%")
+print(f"Nightlights Influence: {rf_model.feature_importances_[1]*100:.1f}%")
